@@ -694,7 +694,7 @@ mod tests {
         );
         let config_toml = ConfigToml {
             sandbox_workspace_write: Some(SandboxWorkspaceWrite {
-                writable_roots: vec![extra_root.clone()],
+                writable_roots: vec![extra_root],
                 network_access: true,
                 exclude_tmpdir_env_var: true,
                 exclude_slash_tmp: false,
@@ -704,7 +704,7 @@ mod tests {
         };
 
         let mut cfg = make_config();
-        cfg.cwd = project_dir.clone();
+        cfg.cwd = project_dir;
         let mut expected_cfg = cfg.clone();
 
         let show_trust = determine_repo_trust_state(&mut cfg, &config_toml, None, None, None)
@@ -735,7 +735,7 @@ mod tests {
         };
 
         let mut cfg = make_config();
-        cfg.cwd = project_dir.clone();
+        cfg.cwd = project_dir;
         let mut expected_cfg = cfg.clone();
 
         let show_trust = determine_repo_trust_state(&mut cfg, &config_toml, None, None, None)
