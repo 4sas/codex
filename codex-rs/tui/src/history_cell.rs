@@ -612,7 +612,8 @@ impl ExecCell {
             return lines.to_vec();
         }
         if max == 1 {
-            return vec![Self::ellipsis_line(lines.len())];
+            let omitted = lines.iter().map(Self::line_real_count).sum();
+            return vec![Self::ellipsis_line(omitted)];
         }
 
         let head = (max - 1) / 2;
@@ -623,7 +624,12 @@ impl ExecCell {
             out.extend(lines[..head].iter().cloned());
         }
 
-        let omitted = lines.len().saturating_sub(head + tail);
+        let middle_start = head;
+        let middle_end = lines.len().saturating_sub(tail);
+        let omitted: usize = lines[middle_start..middle_end]
+            .iter()
+            .map(Self::line_real_count)
+            .sum();
         out.push(Self::ellipsis_line(omitted));
 
         if tail > 0 {
@@ -631,6 +637,26 @@ impl ExecCell {
         }
 
         out
+    }
+
+    fn line_real_count(line: &Line<'static>) -> usize {
+        Self::ellipsis_omitted_count(line).unwrap_or(1)
+    }
+
+    fn ellipsis_omitted_count(line: &Line<'static>) -> Option<usize> {
+        let text: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        let trimmed = text.trim();
+        trimmed
+            .strip_prefix("… +")
+            .and_then(|rest| {
+                rest.strip_suffix(" lines")
+                    .or_else(|| rest.strip_suffix(" line"))
+            })
+            .and_then(|count| count.parse().ok())
     }
 
     fn ellipsis_line(omitted: usize) -> Line<'static> {
@@ -1827,6 +1853,47 @@ mod tests {
 
     fn render_transcript(cell: &dyn HistoryCell) -> Vec<String> {
         render_lines(&cell.transcript_lines())
+    }
+
+    #[test]
+    fn truncate_lines_middle_aggregates_existing_ellipsis() {
+        let total_lines = 20;
+        let mut stderr = String::new();
+        for i in 0..total_lines {
+            if i > 0 {
+                stderr.push('\n');
+            }
+            stderr.push_str(&format!("line {i}"));
+        }
+
+        let output = CommandOutput {
+            exit_code: 1,
+            stdout: String::new(),
+            stderr,
+            formatted_output: String::new(),
+        };
+
+        let lines = output_lines(
+            Some(&output),
+            OutputLinesParams {
+                only_err: false,
+                include_angle_pipe: false,
+                include_prefix: false,
+            },
+        );
+        let truncated = ExecCell::truncate_lines_middle(&lines, 5);
+        let rendered = render_lines(&truncated);
+
+        assert_eq!(
+            rendered,
+            vec![
+                "line 0".to_string(),
+                "line 1".to_string(),
+                "… +16 lines".to_string(),
+                "line 18".to_string(),
+                "line 19".to_string(),
+            ],
+        );
     }
 
     #[test]
