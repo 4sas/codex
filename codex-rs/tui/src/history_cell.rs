@@ -279,6 +279,58 @@ pub(crate) struct ExecCall {
 pub(crate) struct ExecCell {
     calls: Vec<ExecCall>,
 }
+
+#[derive(Clone, Copy)]
+struct PrefixedBlock {
+    initial_prefix: &'static str,
+    subsequent_prefix: &'static str,
+}
+
+impl PrefixedBlock {
+    const fn new(initial_prefix: &'static str, subsequent_prefix: &'static str) -> Self {
+        Self {
+            initial_prefix,
+            subsequent_prefix,
+        }
+    }
+
+    fn wrap_width(self, total_width: u16) -> usize {
+        let prefix_width = UnicodeWidthStr::width(self.initial_prefix)
+            .max(UnicodeWidthStr::width(self.subsequent_prefix));
+        usize::from(total_width).saturating_sub(prefix_width).max(1)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ExecDisplayLayout {
+    command_continuation: PrefixedBlock,
+    command_continuation_max_lines: usize,
+    output_block: PrefixedBlock,
+    output_max_lines: usize,
+}
+
+impl ExecDisplayLayout {
+    const fn new(
+        command_continuation: PrefixedBlock,
+        command_continuation_max_lines: usize,
+        output_block: PrefixedBlock,
+        output_max_lines: usize,
+    ) -> Self {
+        Self {
+            command_continuation,
+            command_continuation_max_lines,
+            output_block,
+            output_max_lines,
+        }
+    }
+}
+
+const EXEC_DISPLAY_LAYOUT: ExecDisplayLayout = ExecDisplayLayout::new(
+    PrefixedBlock::new("  │ ", "  │ "),
+    2,
+    PrefixedBlock::new("  └ ", "    "),
+    5,
+);
 impl HistoryCell for ExecCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         if self.is_exploring_cell() {
@@ -445,6 +497,7 @@ impl ExecCell {
         let [call] = &self.calls.as_slice() else {
             panic!("Expected exactly one call in a command display cell");
         };
+        let layout = EXEC_DISPLAY_LAYOUT;
         let success = call.output.as_ref().map(|o| o.exit_code == 0);
         let bullet = match success {
             Some(true) => "•".green().bold(),
@@ -460,7 +513,7 @@ impl ExecCell {
         let cmd_display = strip_bash_lc_and_escape(&call.command);
         let highlighted_lines = crate::render::highlight::highlight_bash_to_lines(&cmd_display);
 
-        let continuation_wrap_width = (width as usize).saturating_sub(4).max(1);
+        let continuation_wrap_width = layout.command_continuation.wrap_width(width);
         let continuation_opts = crate::wrapping::RtOptions::new(continuation_wrap_width)
             .word_splitter(WordSplitter::NoHyphenation);
 
@@ -491,9 +544,16 @@ impl ExecCell {
 
         lines.push(header_line);
 
-        let continuation_lines = Self::take_head_lines(&continuation_lines, 2);
+        let continuation_lines = Self::limit_lines_from_start(
+            &continuation_lines,
+            layout.command_continuation_max_lines,
+        );
         if !continuation_lines.is_empty() {
-            lines.extend(prefix_lines(continuation_lines, "  │ ".dim(), "  │ ".dim()));
+            lines.extend(prefix_lines(
+                continuation_lines,
+                Span::from(layout.command_continuation.initial_prefix).dim(),
+                Span::from(layout.command_continuation.subsequent_prefix).dim(),
+            ));
         }
 
         if let Some(output) = call.output.as_ref() {
@@ -505,25 +565,33 @@ impl ExecCell {
                     include_prefix: false,
                 },
             );
-            let trimmed_output = Self::truncate_lines_middle(&raw_output_lines, 5);
+            let trimmed_output =
+                Self::truncate_lines_middle(&raw_output_lines, layout.output_max_lines);
 
             let mut wrapped_output: Vec<Line<'static>> = Vec::new();
+            let output_wrap_width = layout.output_block.wrap_width(width);
+            let output_opts = crate::wrapping::RtOptions::new(output_wrap_width)
+                .word_splitter(WordSplitter::NoHyphenation);
             for line in trimmed_output {
                 push_owned_lines(
-                    &crate::wrapping::word_wrap_line(&line, continuation_opts.clone()),
+                    &crate::wrapping::word_wrap_line(&line, output_opts.clone()),
                     &mut wrapped_output,
                 );
             }
 
             if !wrapped_output.is_empty() {
-                lines.extend(prefix_lines(wrapped_output, "  └ ".dim(), "    ".into()));
+                lines.extend(prefix_lines(
+                    wrapped_output,
+                    Span::from(layout.output_block.initial_prefix).dim(),
+                    Span::from(layout.output_block.subsequent_prefix),
+                ));
             }
         }
 
         lines
     }
 
-    fn take_head_lines(lines: &[Line<'static>], keep: usize) -> Vec<Line<'static>> {
+    fn limit_lines_from_start(lines: &[Line<'static>], keep: usize) -> Vec<Line<'static>> {
         if lines.len() <= keep {
             return lines.to_vec();
         }
