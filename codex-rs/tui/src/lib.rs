@@ -547,18 +547,25 @@ mod tests {
     use codex_core::auth::write_auth_json;
     use codex_core::token_data::IdTokenInfo;
     use codex_core::token_data::TokenData;
+    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::Ordering;
+
+    // Track a monotonic suffix for CODEX_HOME directories used in tests. We avoid
+    // timestamp-based names because parallel tests can start within the same
+    // nanosecond and collide. A simple atomic counter guarantees uniqueness without
+    // extra filesystem probes.
+    static NEXT_CONFIG_ID: AtomicU64 = AtomicU64::new(0);
     fn make_config() -> Config {
         // Create a unique CODEX_HOME per test to isolate auth.json writes.
         let mut codex_home = std::env::temp_dir();
-        let unique_suffix = format!(
+        // Relaxed ordering is sufficient: the fetch_add just needs to hand out a
+        // distinct number to each caller; there are no other memory dependencies.
+        let unique_suffix = NEXT_CONFIG_ID.fetch_add(1, Ordering::Relaxed);
+        codex_home.push(format!(
             "codex_tui_test_{}_{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-        codex_home.push(unique_suffix);
+            unique_suffix
+        ));
         std::fs::create_dir_all(&codex_home).expect("create unique CODEX_HOME");
 
         Config::load_from_base_config_with_overrides(

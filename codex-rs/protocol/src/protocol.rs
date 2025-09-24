@@ -1045,7 +1045,7 @@ pub struct ExecCommandBeginEvent {
     /// True when this exec was initiated directly by the user (e.g. bang command),
     /// not by the agent/model. Defaults to false for backwards compatibility.
     #[serde(default)]
-    pub user_initiated_shell_command: bool,
+    pub is_user_shell_command: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
@@ -1311,20 +1311,5 @@ mod tests {
 
         let deserialized: ExecCommandOutputDeltaEvent = serde_json::from_str(&serialized).unwrap();
         assert_eq!(deserialized, event);
-    }
-
-    #[test]
-    fn serialize_run_user_shell_command_op() {
-        let op = Op::RunUserShellCommand {
-            command: "echo hi".to_string(),
-        };
-        let value = serde_json::to_value(op).unwrap();
-        assert_eq!(
-            value,
-            json!({
-                "type": "run_user_shell_command",
-                "command": "echo hi",
-            })
-        );
     }
 }

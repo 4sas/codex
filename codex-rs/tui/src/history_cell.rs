@@ -253,7 +253,7 @@ pub(crate) struct ExecCall {
     pub(crate) command: Vec<String>,
     pub(crate) parsed: Vec<ParsedCommand>,
     pub(crate) output: Option<CommandOutput>,
-    pub(crate) user_initiated_shell_command: bool,
+    pub(crate) is_user_shell_command: bool,
     start_time: Option<Instant>,
     duration: Option<Duration>,
 }
@@ -468,33 +468,30 @@ impl ExecCell {
             }
         }
 
-        if let Some(output) = call.output.as_ref() {
-            let is_shell_exec_cell = self.calls.iter().any(|c| c.user_initiated_shell_command);
-            let should_show_output = is_shell_exec_cell || output.exit_code != 0;
-            if should_show_output {
-                let line_limit = if is_shell_exec_cell {
-                    USER_SHELL_TOOL_CALL_MAX_LINES
-                } else {
-                    TOOL_CALL_MAX_LINES
-                };
-                let out = output_lines(
-                    Some(output),
-                    OutputLinesParams {
-                        line_limit,
-                        only_err: false,
-                        include_angle_pipe: false,
-                        include_prefix: false,
-                    },
-                )
-                .into_iter()
-                .join("\n");
-                if !out.trim().is_empty() {
-                    // Wrap the output.
-                    for line in out.lines() {
-                        let wrapped = textwrap::wrap(line, TwOptions::new(width as usize - 4));
-                        body_lines
-                            .extend(wrapped.into_iter().map(|l| Line::from(l.to_string().dim())));
-                    }
+        if let Some(output) = call.output.as_ref()
+            && (call.is_user_shell_command || output.exit_code != 0)
+        {
+            let line_limit = if call.is_user_shell_command {
+                USER_SHELL_TOOL_CALL_MAX_LINES
+            } else {
+                TOOL_CALL_MAX_LINES
+            };
+            let out = output_lines(
+                Some(output),
+                OutputLinesParams {
+                    line_limit,
+                    only_err: false,
+                    include_angle_pipe: false,
+                    include_prefix: false,
+                },
+            )
+            .into_iter()
+            .join("\n");
+            if !out.trim().is_empty() {
+                // Wrap the output.
+                for line in out.lines() {
+                    let wrapped = textwrap::wrap(line, TwOptions::new(width as usize - 4));
+                    body_lines.extend(wrapped.into_iter().map(|l| Line::from(l.to_string().dim())));
                 }
             }
         }
@@ -577,13 +574,13 @@ impl ExecCell {
         call_id: String,
         command: Vec<String>,
         parsed: Vec<ParsedCommand>,
-        user_initiated_shell_command: bool,
+        is_user_shell_command: bool,
     ) -> Option<Self> {
         let call = ExecCall {
             call_id,
             command,
             parsed,
-            user_initiated_shell_command,
+            is_user_shell_command,
             output: None,
             start_time: Some(Instant::now()),
             duration: None,
@@ -739,13 +736,13 @@ pub(crate) fn new_active_exec_command(
     call_id: String,
     command: Vec<String>,
     parsed: Vec<ParsedCommand>,
-    user_initiated_shell_command: bool,
+    is_user_shell_command: bool,
 ) -> ExecCell {
     ExecCell::new(ExecCall {
         call_id,
         command,
         parsed,
-        user_initiated_shell_command,
+        is_user_shell_command,
         output: None,
         start_time: Some(Instant::now()),
         duration: None,
@@ -1699,7 +1696,7 @@ mod tests {
                 },
             ],
             output: None,
-            user_initiated_shell_command: false,
+            is_user_shell_command: false,
             start_time: Some(Instant::now()),
             duration: None,
         });
@@ -1731,7 +1728,7 @@ mod tests {
                 cmd: "rg shimmer_spans".into(),
             }],
             output: None,
-            user_initiated_shell_command: false,
+            is_user_shell_command: false,
             start_time: Some(Instant::now()),
             duration: None,
         });
@@ -1816,7 +1813,7 @@ mod tests {
                 },
             ],
             output: None,
-            user_initiated_shell_command: false,
+            is_user_shell_command: false,
             start_time: Some(Instant::now()),
             duration: None,
         });
@@ -1845,7 +1842,7 @@ mod tests {
             command: vec!["bash".into(), "-lc".into(), cmd],
             parsed: Vec::new(),
             output: None,
-            user_initiated_shell_command: false,
+            is_user_shell_command: false,
             start_time: Some(Instant::now()),
             duration: None,
         });
@@ -1876,7 +1873,7 @@ mod tests {
             command: vec!["echo".into(), "ok".into()],
             parsed: Vec::new(),
             output: None,
-            user_initiated_shell_command: false,
+            is_user_shell_command: false,
             start_time: Some(Instant::now()),
             duration: None,
         });
@@ -1905,7 +1902,7 @@ mod tests {
             command: vec!["bash".into(), "-lc".into(), long],
             parsed: Vec::new(),
             output: None,
-            user_initiated_shell_command: false,
+            is_user_shell_command: false,
             start_time: Some(Instant::now()),
             duration: None,
         });
@@ -1933,7 +1930,7 @@ mod tests {
             command: vec!["bash".into(), "-lc".into(), cmd],
             parsed: Vec::new(),
             output: None,
-            user_initiated_shell_command: false,
+            is_user_shell_command: false,
             start_time: Some(Instant::now()),
             duration: None,
         });
@@ -1962,7 +1959,7 @@ mod tests {
             command: vec!["bash".into(), "-lc".into(), cmd],
             parsed: Vec::new(),
             output: None,
-            user_initiated_shell_command: false,
+            is_user_shell_command: false,
             start_time: Some(Instant::now()),
             duration: None,
         });
@@ -1991,7 +1988,7 @@ mod tests {
             command: vec!["bash".into(), "-lc".into(), "seq 1 10 1>&2 && false".into()],
             parsed: Vec::new(),
             output: None,
-            user_initiated_shell_command: false,
+            is_user_shell_command: false,
             start_time: Some(Instant::now()),
             duration: None,
         });
@@ -2038,7 +2035,7 @@ mod tests {
             command: vec!["bash".into(), "-lc".into(), long_cmd.to_string()],
             parsed: Vec::new(),
             output: None,
-            user_initiated_shell_command: false,
+            is_user_shell_command: false,
             start_time: Some(Instant::now()),
             duration: None,
         });

@@ -803,7 +803,7 @@ impl Session {
             command_for_display,
             cwd,
             apply_patch,
-            user_initiated_shell_command,
+            is_user_shell_command,
         } = exec_command_context;
         let msg = match apply_patch {
             Some(ApplyPatchCommandContext {
@@ -826,7 +826,7 @@ impl Session {
                     .into_iter()
                     .map(Into::into)
                     .collect(),
-                user_initiated_shell_command,
+                is_user_shell_command,
             }),
         };
         let event = Event {
@@ -1067,7 +1067,7 @@ pub(crate) struct ExecCommandContext {
     pub(crate) command_for_display: Vec<String>,
     pub(crate) cwd: PathBuf,
     pub(crate) apply_patch: Option<ApplyPatchCommandContext>,
-    pub(crate) user_initiated_shell_command: bool,
+    pub(crate) is_user_shell_command: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1521,12 +1521,7 @@ async fn submission_loop(
                 sess.send_event(event).await;
             }
             Op::RunUserShellCommand { command } => {
-                spawn_user_shell_command_task(
-                    sess.clone(),
-                    Arc::clone(&turn_context),
-                    sub.id,
-                    command,
-                );
+                spawn_user_shell_command_task(sess.clone(), &turn_context, sub.id, command);
             }
             Op::Review { review_request } => {
                 spawn_review_thread(
@@ -1548,14 +1543,14 @@ async fn submission_loop(
 
 fn spawn_user_shell_command_task(
     sess: Arc<Session>,
-    turn_context: Arc<TurnContext>,
+    turn_context: &Arc<TurnContext>,
     sub_id: String,
     command: String,
 ) {
-    let spawn_sub_id = sub_id.clone();
     let handle = {
-        let sess = Arc::clone(&sess);
-        let turn_context = Arc::clone(&turn_context);
+        let sess = sess.clone();
+        let turn_context = turn_context.clone();
+        let spawn_sub_id = sub_id.clone();
         tokio::spawn(async move {
             run_user_shell_command(sess, turn_context, spawn_sub_id, command).await;
         })
@@ -1563,7 +1558,7 @@ fn spawn_user_shell_command_task(
     };
 
     sess.set_task(AgentTask {
-        sess: Arc::clone(&sess),
+        sess: sess.clone(),
         sub_id,
         handle,
         kind: AgentTaskKind::Regular,
@@ -1607,7 +1602,7 @@ async fn run_user_shell_command(
         command_for_display: shell_invocation,
         cwd: params.cwd.clone(),
         apply_patch: None,
-        user_initiated_shell_command: true,
+        is_user_shell_command: true,
     };
 
     let sandbox_policy = SandboxPolicy::DangerFullAccess;
@@ -2966,7 +2961,7 @@ async fn handle_container_exec_with_params(
                 changes: convert_apply_patch_to_protocol(&action),
             },
         ),
-        user_initiated_shell_command: false,
+        is_user_shell_command: false,
     };
 
     let params = maybe_translate_shell_command(params, sess, turn_context);

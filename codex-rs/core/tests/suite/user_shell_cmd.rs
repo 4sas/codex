@@ -1,5 +1,3 @@
-#![cfg(unix)]
-
 use codex_core::ConversationManager;
 use codex_core::NewConversation;
 use codex_core::protocol::EventMsg;
@@ -9,14 +7,30 @@ use codex_core::protocol::TurnAbortReason;
 use core_test_support::load_default_config_for_test;
 use core_test_support::wait_for_event;
 use std::path::PathBuf;
+use std::process::Command;
+use std::process::Stdio;
 use tempfile::TempDir;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+fn detect_python_executable() -> Option<String> {
+    let candidates = ["python3", "python"];
+    candidates.iter().find_map(|candidate| {
+        Command::new(candidate)
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .ok()
+            .and_then(|status| status.success().then(|| (*candidate).to_string()))
+    })
+}
+
+#[tokio::test]
 async fn user_shell_cmd_ls_and_cat_in_temp_dir() {
-    unsafe {
-        std::env::set_var("CODEX_HERMETIC_TEST_SHELL", "1");
-    }
-    // No env overrides needed; test build hard-codes a hermetic zsh with empty rc.
+    let Some(python) = detect_python_executable() else {
+        eprintln!("skipping test: python3 not found in PATH");
+        return;
+    };
+
     // Create a temporary working directory with a known file.
     let cwd = TempDir::new().unwrap();
     let file_name = "hello.txt";
@@ -41,11 +55,12 @@ async fn user_shell_cmd_ls_and_cat_in_temp_dir() {
         .await
         .expect("create new conversation");
 
-    // 1) ls should list the file
+    // 1) python should list the file
+    let list_cmd = format!(
+        "{python} -c \"import pathlib; print('\\n'.join(sorted(p.name for p in pathlib.Path('.').iterdir())))\""
+    );
     codex
-        .submit(Op::RunUserShellCommand {
-            command: "ls".to_string(),
-        })
+        .submit(Op::RunUserShellCommand { command: list_cmd })
         .await
         .unwrap();
     let msg = wait_for_event(&codex, |ev| matches!(ev, EventMsg::ExecCommandEnd(_))).await;
@@ -61,11 +76,12 @@ async fn user_shell_cmd_ls_and_cat_in_temp_dir() {
         "ls output should include {file_name}, got: {stdout:?}"
     );
 
-    // 2) cat the file should return exact contents
+    // 2) python should print the file contents verbatim
+    let cat_cmd = format!(
+        "{python} -c \"import pathlib; print(pathlib.Path('{file_name}').read_text(), end='')\""
+    );
     codex
-        .submit(Op::RunUserShellCommand {
-            command: format!("cat {file_name}"),
-        })
+        .submit(Op::RunUserShellCommand { command: cat_cmd })
         .await
         .unwrap();
     let msg = wait_for_event(&codex, |ev| matches!(ev, EventMsg::ExecCommandEnd(_))).await;
@@ -79,12 +95,12 @@ async fn user_shell_cmd_ls_and_cat_in_temp_dir() {
     assert_eq!(stdout, contents);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 async fn user_shell_cmd_can_be_interrupted() {
-    unsafe {
-        std::env::set_var("CODEX_HERMETIC_TEST_SHELL", "1");
-    }
-    // No env overrides needed; test build hard-codes a hermetic zsh with empty rc.
+    let Some(python) = detect_python_executable() else {
+        eprintln!("skipping test: python3 not found in PATH");
+        return;
+    };
     // Set up isolated config and conversation.
     let codex_home = TempDir::new().unwrap();
     let config = load_default_config_for_test(&codex_home);
@@ -99,10 +115,9 @@ async fn user_shell_cmd_can_be_interrupted() {
         .expect("create new conversation");
 
     // Start a long-running command and then interrupt it.
+    let sleep_cmd = format!("{python} -c \"import time; time.sleep(5)\"");
     codex
-        .submit(Op::RunUserShellCommand {
-            command: "sleep 5".to_string(),
-        })
+        .submit(Op::RunUserShellCommand { command: sleep_cmd })
         .await
         .unwrap();
 

@@ -93,11 +93,14 @@ use codex_core::protocol_config_types::ReasoningEffort as ReasoningEffortConfig;
 use codex_file_search::FileMatch;
 use codex_protocol::mcp_protocol::ConversationId;
 
+const BANG_COMMAND_HELP_TITLE: &str = "Prefix a command with ! to run it locally";
+const BANG_COMMAND_HELP_HINT: &str = "Example: !ls";
+
 // Track information about an in-flight exec command.
 struct RunningCommand {
     command: Vec<String>,
     parsed_cmd: Vec<ParsedCommand>,
-    user_initiated_shell_command: bool,
+    is_user_shell_command: bool,
 }
 
 /// Common initialization parameters shared by all `ChatWidget` constructors.
@@ -494,8 +497,8 @@ impl ChatWidget {
 
     pub(crate) fn handle_exec_end_now(&mut self, ev: ExecCommandEndEvent) {
         let running = self.running_commands.remove(&ev.call_id);
-        let (command, parsed, user_initiated_shell_command) = match running {
-            Some(rc) => (rc.command, rc.parsed_cmd, rc.user_initiated_shell_command),
+        let (command, parsed, is_user_shell_command) = match running {
+            Some(rc) => (rc.command, rc.parsed_cmd, rc.is_user_shell_command),
             None => (vec![ev.call_id.clone()], Vec::new(), false),
         };
 
@@ -506,7 +509,7 @@ impl ChatWidget {
                 ev.call_id.clone(),
                 command,
                 parsed,
-                user_initiated_shell_command,
+                is_user_shell_command,
             ));
         }
         if let Some(cell) = self.active_exec_cell.as_mut() {
@@ -586,7 +589,7 @@ impl ChatWidget {
             RunningCommand {
                 command: ev.command.clone(),
                 parsed_cmd: ev.parsed_cmd.clone(),
-                user_initiated_shell_command: ev.user_initiated_shell_command,
+                is_user_shell_command: ev.is_user_shell_command,
             },
         );
         if let Some(exec) = &self.active_exec_cell {
@@ -594,7 +597,7 @@ impl ChatWidget {
                 ev.call_id.clone(),
                 ev.command.clone(),
                 ev.parsed_cmd.clone(),
-                ev.user_initiated_shell_command,
+                ev.is_user_shell_command,
             ) {
                 self.active_exec_cell = Some(new_exec);
             } else {
@@ -604,7 +607,7 @@ impl ChatWidget {
                     ev.call_id.clone(),
                     ev.command.clone(),
                     ev.parsed_cmd,
-                    ev.user_initiated_shell_command,
+                    ev.is_user_shell_command,
                 ));
             }
         } else {
@@ -612,7 +615,7 @@ impl ChatWidget {
                 ev.call_id.clone(),
                 ev.command.clone(),
                 ev.parsed_cmd,
-                ev.user_initiated_shell_command,
+                ev.is_user_shell_command,
             ));
         }
 
@@ -1007,11 +1010,20 @@ impl ChatWidget {
 
         // Special-case: "!cmd" executes a local shell command instead of sending to the model.
         if let Some(stripped) = text.strip_prefix('!') {
-            let cmd = stripped.trim().to_string();
-            if !cmd.is_empty() {
-                self.submit_op(Op::RunUserShellCommand { command: cmd });
+            let cmd = stripped.trim();
+            if cmd.is_empty() {
+                self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
+                    history_cell::new_info_event(
+                        BANG_COMMAND_HELP_TITLE.to_string(),
+                        Some(BANG_COMMAND_HELP_HINT.to_string()),
+                    ),
+                )));
                 return;
             }
+            self.submit_op(Op::RunUserShellCommand {
+                command: cmd.to_string(),
+            });
+            return;
         }
 
         if !text.is_empty() {
